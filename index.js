@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, Partials } = require('discord.js');
+const https = require('https');
 
 const client = new Client({
   intents: [
@@ -25,6 +26,8 @@ const BAD_WORDS = [
 ];
 
 const warningHistory = {};
+const lastSearch = {}; // stores last search topic per channel
+const searchOffset = {}; // tracks how many results deep we are per channel
 
 function getLogChannel(guild) {
   return guild.channels.cache.find(c => c.name === LOG_CHANNEL_NAME);
@@ -60,6 +63,43 @@ function addWarning(userId, userTag, reason, type) {
   warningHistory[userId].offenses.push({ reason, type, date: new Date().toISOString() });
 }
 
+function duckSearch(query) {
+  return new Promise((resolve, reject) => {
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          reject(new Error('failed to parse response'));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function doSearch(query, offset = 0) {
+  const data = await duckSearch(query);
+  const results = [];
+
+  if (data.AbstractText) {
+    results.push({ title: data.Heading || query, snippet: data.AbstractText, url: data.AbstractURL });
+  }
+
+  if (data.RelatedTopics) {
+    for (const topic of data.RelatedTopics) {
+      if (topic.Text && topic.FirstURL) {
+        results.push({ title: topic.Text.slice(0, 60), snippet: topic.Text, url: topic.FirstURL });
+      }
+      if (results.length >= 5) break;
+    }
+  }
+
+  return results[offset] || results[0] || null;
+}
+
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
@@ -91,15 +131,60 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // search commands (everyone can use)
+    if (command === 'search') {
+      const query = args.slice(opalIndex + 2).join(' ');
+      if (!query) {
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`what would you like me to search for? nyan ⸝⸝ usage: opal search [question]`)] });
+        return;
+      }
+      try {
+        const result = await doSearch(query, 0);
+        if (!result) {
+          await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i couldn't find anything on that nyan ⸝⸝ try rephrasing your question`)] });
+          return;
+        }
+        lastSearch[message.channel.id] = query;
+        searchOffset[message.channel.id] = 1;
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(
+          `›゛ here's what i found on: **${query}**\n\n${result.snippet}\n\n[read this for more info!](${result.url})\n\n*say \`opal elaborate\` or \`opal more help\` to dive deeper nyan*`
+        )] });
+      } catch {
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`something went wrong with the search nyan ⸝⸝ try again`)] });
+      }
+      return;
+    }
+
+    if (command === 'elaborate' || (command === 'more' && args[opalIndex + 2]?.toLowerCase() === 'help')) {
+      const topic = lastSearch[message.channel.id];
+      if (!topic) {
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i don't have a topic to elaborate on nyan ⸝⸝ try \`opal search [question]\` first`)] });
+        return;
+      }
+      try {
+        const offset = searchOffset[message.channel.id] || 1;
+        const result = await doSearch(topic, offset);
+        if (!result) {
+          await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i've shared everything i found on **${topic}** nyan ⸝⸝ try a new search`)] });
+          return;
+        }
+        searchOffset[message.channel.id] = offset + 1;
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(
+          `›゛ here's more on: **${topic}**\n\n${result.snippet}\n\n[read this for more info!](${result.url})\n\n*say \`opal elaborate\` or \`opal more help\` for even more nyan*`
+        )] });
+      } catch {
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`something went wrong nyan ⸝⸝ try again`)] });
+      }
+      return;
+    }
+
     if (isMod(message.member)) {
       const errorEmbed = (msg) => new EmbedBuilder().setColor(EMBED_COLOR).setDescription(msg);
 
       if (command === 'warn') {
         const target = message.mentions.users.first();
         const targetId = target?.id || args[opalIndex + 2];
-        const reason = target
-          ? args.slice(opalIndex + 3).join(' ')
-          : args.slice(opalIndex + 3).join(' ');
+        const reason = args.slice(opalIndex + 3).join(' ');
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan ⸝⸝ usage: opal warn @user reason`)] }); return; }
         if (!reason) { await message.channel.send({ embeds: [errorEmbed(`please provide a reason nyan ⸝⸝ usage: opal warn @user reason`)] }); return; }
         const userTag = target?.tag || targetId;
@@ -125,9 +210,7 @@ client.on('messageCreate', async (message) => {
       if (command === 'ban') {
         const target = message.mentions.members.first();
         const targetId = target?.id || args[opalIndex + 2];
-        const reason = target
-          ? args.slice(opalIndex + 3).join(' ')
-          : args.slice(opalIndex + 3).join(' ');
+        const reason = args.slice(opalIndex + 3).join(' ');
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan ⸝⸝ usage: opal ban @user reason`)] }); return; }
         if (!reason) { await message.channel.send({ embeds: [errorEmbed(`please provide a reason nyan ⸝⸝ usage: opal ban @user reason`)] }); return; }
         try {
@@ -177,8 +260,7 @@ client.on('messageCreate', async (message) => {
       if (command === 'removewarning') {
         const target = message.mentions.users.first();
         const targetId = target?.id || args[opalIndex + 2];
-        const indexArg = target ? args[opalIndex + 3] : args[opalIndex + 3];
-        const index = parseInt(indexArg) - 1;
+        const index = parseInt(target ? args[opalIndex + 3] : args[opalIndex + 3]) - 1;
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan ⸝⸝ usage: opal removewarning @user 2`)] }); return; }
         const record = warningHistory[targetId];
         if (!record || record.offenses.length === 0) {
