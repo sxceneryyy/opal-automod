@@ -15,6 +15,7 @@ const client = new Client({
 });
 
 const LOG_CHANNEL_NAME = 'opal-log';
+const SEARCH_CHANNEL_NAME = 'homework-help';
 const EMBED_COLOR = 0xA2BFE8;
 const REACT_EMOJI = '<:chocola_ok:1502830380883902675>';
 const ALLOWED_ROLES = ['mod', 'head mod', 'admin', 'sexiest', 'millie'];
@@ -185,6 +186,11 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'search') {
+      if (message.channel.name !== SEARCH_CHANNEL_NAME) {
+        const hwChannel = message.guild.channels.cache.find(c => c.name === SEARCH_CHANNEL_NAME);
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`opal search is only available in <#${hwChannel?.id}> nyan`)] });
+        return;
+      }
       const query = args.slice(opalIndex + 2).join(' ');
       if (!query) {
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`what would you like me to search for? nyan ⸝⸝ usage: opal search [question]`)] });
@@ -209,6 +215,11 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'elaborate' || (command === 'more' && args[opalIndex + 2]?.toLowerCase() === 'help')) {
+      if (message.channel.name !== SEARCH_CHANNEL_NAME) {
+        const hwChannel = message.guild.channels.cache.find(c => c.name === SEARCH_CHANNEL_NAME);
+        await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`opal search is only available in <#${hwChannel?.id}> nyan`)] });
+        return;
+      }
       const topic = lastSearch[message.channel.id];
       if (!topic) {
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i don't have a topic to elaborate on nyan ⸝⸝ try \`opal search [question]\` first`)] });
@@ -404,8 +415,4 @@ client.on('messageCreate', async (message) => {
     // react when name is mentioned with no command
     await message.react(REACT_EMOJI);
   }
-});
-
-connectDB().then(() => {
-  client.login(process.env.TOKEN);
 });
