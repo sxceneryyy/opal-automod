@@ -118,11 +118,11 @@ client.on('messageCreate', async (message) => {
   const content = message.content.toLowerCase();
 
   // word filter automod
-  const triggered = BAD_WORDS.some(word => content.includes(word));
-  if (triggered) {
+  const triggeredWord = BAD_WORDS.find(word => content.includes(word));
+  if (triggeredWord) {
     await message.delete();
-    addWarning(message.author.id, message.author.tag, `automod: message contained a banned word`, 'automod');
-    await sendLog(message.guild, 'automod', message.author, null, `message contained a banned word`);
+    addWarning(message.author.id, message.author.tag, `automod: used "${triggeredWord}"`, 'automod');
+    await sendLog(message.guild, 'automod', message.author, null, `used "${triggeredWord}"`);
     const warning = await message.channel.send(`<@${message.author.id}> your message was removed for violating server rules nyan ⸝⸝ this counts as a warning`);
     setTimeout(() => warning.delete(), 5000);
     return;
@@ -139,7 +139,6 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // search commands (everyone can use)
     if (command === 'search') {
       const query = args.slice(opalIndex + 2).join(' ');
       if (!query) {
