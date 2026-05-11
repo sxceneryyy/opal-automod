@@ -102,49 +102,45 @@ async function sendLog(guild, type, user, moderator, reason) {
   await logChannel.send({ embeds: [embed] });
 }
 
-function duckSearch(query) {
+async function braveSearch(query, offset = 0) {
   return new Promise((resolve, reject) => {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1&skip_disambig=0`;
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+    const options = {
+      hostname: 'api.search.brave.com',
+      path: `/res/v1/web/search?q=${encodeURIComponent(query)}&count=9&offset=${offset}`,
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': process.env.BRAVE_API_KEY
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
         try {
-          resolve(JSON.parse(data));
+          const body = Buffer.concat(chunks).toString();
+          const data = JSON.parse(body);
+          const results = data.web?.results || [];
+          if (results.length === 0) {
+            resolve(null);
+            return;
+          }
+          resolve({
+            snippet: results[0].description || results[0].title,
+            url: results[0].url,
+            title: results[0].title
+          });
         } catch {
           reject(new Error('failed to parse response'));
         }
       });
-    }).on('error', reject);
+    });
+
+    req.on('error', reject);
+    req.end();
   });
-}
-
-async function doSearch(query, offset = 0) {
-  const data = await duckSearch(query);
-  const results = [];
-
-  if (data.AbstractText && data.AbstractText.length > 0) {
-    results.push({
-      snippet: data.AbstractText,
-      url: data.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(query)}`
-    });
-  }
-
-  for (const topic of data.RelatedTopics || []) {
-    if (topic.Text && topic.FirstURL) {
-      results.push({ snippet: topic.Text, url: topic.FirstURL });
-    }
-    if (results.length >= 8) break;
-  }
-
-  if (results.length === 0) {
-    results.push({
-      snippet: `here are some resources on ${query}`,
-      url: `https://www.khanacademy.org/search?page_search_query=${encodeURIComponent(query)}`
-    });
-  }
-
-  return results[offset] || results[results.length - 1] || null;
 }
 
 connectDB().then(() => {
@@ -192,7 +188,7 @@ client.on('messageCreate', async (message) => {
         return;
       }
       try {
-        const result = await doSearch(query, 0);
+        const result = await braveSearch(query, 0);
         if (!result) {
           await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i couldn't find anything on that nyan ⸝⸝ try rephrasing your question`)] });
           return;
@@ -216,7 +212,7 @@ client.on('messageCreate', async (message) => {
       }
       try {
         const offset = searchOffset[message.channel.id] || 1;
-        const result = await doSearch(topic, offset);
+        const result = await braveSearch(topic, offset);
         if (!result) {
           await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`i've shared everything i found on **${topic}** nyan ⸝⸝ try a new search`)] });
           return;
