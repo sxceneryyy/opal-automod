@@ -118,7 +118,10 @@ client.on('messageCreate', async (message) => {
   const content = message.content.toLowerCase();
 
   // word filter automod
-  const triggeredWord = BAD_WORDS.find(word => content.includes(word));
+  const triggeredWord = BAD_WORDS.find(word => {
+  const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  return regex.test(content);
+});
   if (triggeredWord) {
     await message.delete();
     addWarning(message.author.id, message.author.tag, `automod: used "${triggeredWord}"`, 'automod');
