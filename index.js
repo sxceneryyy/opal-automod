@@ -85,7 +85,7 @@ client.on('messageCreate', async (message) => {
     const args = message.content.split(' ');
     const opalIndex = args.findIndex(a => a.toLowerCase() === 'opal');
     const command = args[opalIndex + 1]?.toLowerCase();
-    const modCommands = ['ban', 'kick', 'warn', 'lookup', 'removewarning', 'purge', 'slowmode', 'lock', 'unlock', 'membercount', 'userinfo', 'banlist', 'kicklist', 'warnlist'];
+    const modCommands = ['ban', 'kick', 'warn', 'lookup', 'removewarning', 'purge', 'slowmode', 'lock', 'unlock', 'membercount', 'userinfo', 'banlist', 'kicklist', 'warnlist', 'unban'];
 
     if (!isMod(message.member) && modCommands.includes(command)) {
       return;
@@ -139,6 +139,19 @@ client.on('messageCreate', async (message) => {
           await message.react(REACT_EMOJI);
         } catch (err) {
           await message.channel.send({ embeds: [errorEmbed(`could not ban that user nyan ⸝⸝ they may already be banned or the id is invalid`)] });
+        }
+        return;
+      }
+
+      if (command === 'unban') {
+        const targetId = args[opalIndex + 2];
+        if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please provide a user id nyan ⸝⸝ usage: opal unban 123456789`)] }); return; }
+        try {
+          await message.guild.bans.remove(targetId);
+          await message.react(REACT_EMOJI);
+          await sendLog(message.guild, 'unban', { id: targetId, tag: targetId }, message.author, 'unbanned');
+        } catch (err) {
+          await message.channel.send({ embeds: [errorEmbed(`could not unban that user nyan ⸝⸝ they may not be banned or the id is invalid`)] });
         }
         return;
       }
