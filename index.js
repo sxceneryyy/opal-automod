@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, Partials } = require('discord.js');
 const https = require('https');
+const { MongoClient } = require('mongodb');
 
 const client = new Client({
   intents: [
@@ -25,9 +26,50 @@ const BAD_WORDS = [
   'kill urself', 'hentai', 'end yourself', 'rope yourself'
 ];
 
-const warningHistory = {};
 const lastSearch = {};
 const searchOffset = {};
+
+let db;
+
+async function connectDB() {
+  const mongoClient = new MongoClient(process.env.MONGODB_URI);
+  await mongoClient.connect();
+  db = mongoClient.db('opal');
+  console.log('✅ Connected to MongoDB');
+}
+
+async function getRecord(userId) {
+  return await db.collection('offenses').findOne({ userId });
+}
+
+async function addWarning(userId, userTag, reason, type) {
+  await db.collection('offenses').updateOne(
+    { userId },
+    {
+      $set: { tag: userTag },
+      $push: { offenses: { reason, type, date: new Date().toISOString() } }
+    },
+    { upsert: true }
+  );
+}
+
+async function removeWarning(userId, index) {
+  const record = await getRecord(userId);
+  if (!record) return false;
+  record.offenses.splice(index, 1);
+  await db.collection('offenses').updateOne(
+    { userId },
+    { $set: { offenses: record.offenses } }
+  );
+  return true;
+}
+
+async function getList(type) {
+  const filter = type === 'warn'
+    ? { 'offenses.type': { $in: ['warn', 'automod'] } }
+    : { 'offenses.type': type };
+  return await db.collection('offenses').find(filter).toArray();
+}
 
 function getLogChannel(guild) {
   return guild.channels.cache.find(c => c.name === LOG_CHANNEL_NAME);
@@ -55,12 +97,6 @@ async function sendLog(guild, type, user, moderator, reason) {
   }
 
   await logChannel.send({ embeds: [embed] });
-}
-
-function addWarning(userId, userTag, reason, type) {
-  if (!warningHistory[userId]) warningHistory[userId] = { tag: userTag, offenses: [] };
-  warningHistory[userId].tag = userTag;
-  warningHistory[userId].offenses.push({ reason, type, date: new Date().toISOString() });
 }
 
 function duckSearch(query) {
@@ -108,6 +144,10 @@ async function doSearch(query, offset = 0) {
   return results[offset] || results[results.length - 1] || null;
 }
 
+connectDB().then(() => {
+  client.login(process.env.TOKEN);
+});
+
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
@@ -119,12 +159,12 @@ client.on('messageCreate', async (message) => {
 
   // word filter automod
   const triggeredWord = BAD_WORDS.find(word => {
-  const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-  return regex.test(content);
-});
+    const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    return regex.test(content);
+  });
   if (triggeredWord) {
     await message.delete();
-    addWarning(message.author.id, message.author.tag, `automod: used "${triggeredWord}"`, 'automod');
+    await addWarning(message.author.id, message.author.tag, `automod: used "${triggeredWord}"`, 'automod');
     await sendLog(message.guild, 'automod', message.author, null, `used "${triggeredWord}"`);
     const warning = await message.channel.send(`<@${message.author.id}> your message was removed for violating server rules nyan ⸝⸝ this counts as a warning`);
     setTimeout(() => warning.delete(), 5000);
@@ -198,7 +238,7 @@ client.on('messageCreate', async (message) => {
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan ⸝⸝ usage: opal warn @user reason`)] }); return; }
         if (!reason) { await message.channel.send({ embeds: [errorEmbed(`please provide a reason nyan ⸝⸝ usage: opal warn @user reason`)] }); return; }
         const userTag = target?.tag || targetId;
-        addWarning(targetId, userTag, reason, 'warn');
+        await addWarning(targetId, userTag, reason, 'warn');
         const fakeUser = target || { id: targetId, tag: targetId };
         await sendLog(message.guild, 'warn', fakeUser, message.author, reason);
         await message.react(REACT_EMOJI);
@@ -211,7 +251,7 @@ client.on('messageCreate', async (message) => {
         if (!target) { await message.channel.send({ embeds: [errorEmbed(`please mention a user nyan ⸝⸝ usage: opal kick @user reason`)] }); return; }
         if (!reason) { await message.channel.send({ embeds: [errorEmbed(`please provide a reason nyan ⸝⸝ usage: opal kick @user reason`)] }); return; }
         await target.kick(reason);
-        addWarning(target.id, target.user.tag, `kicked: ${reason}`, 'kick');
+        await addWarning(target.id, target.user.tag, `kicked: ${reason}`, 'kick');
         await sendLog(message.guild, 'kick', target.user, message.author, reason);
         await message.react(REACT_EMOJI);
         return;
@@ -226,7 +266,7 @@ client.on('messageCreate', async (message) => {
         try {
           await message.guild.bans.create(targetId, { reason });
           const userTag = target?.user.tag || targetId;
-          addWarning(targetId, userTag, `banned: ${reason}`, 'ban');
+          await addWarning(targetId, userTag, `banned: ${reason}`, 'ban');
           const fakeUser = target?.user || { id: targetId, tag: targetId };
           await sendLog(message.guild, 'ban', fakeUser, message.author, reason);
           await message.react(REACT_EMOJI);
@@ -253,7 +293,7 @@ client.on('messageCreate', async (message) => {
         const target = message.mentions.users.first();
         const targetId = target?.id || args[opalIndex + 2];
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan`)] }); return; }
-        const record = warningHistory[targetId];
+        const record = await getRecord(targetId);
         if (!record || record.offenses.length === 0) {
           await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`no history found for <@${targetId}> nyan`)] });
           return;
@@ -272,7 +312,7 @@ client.on('messageCreate', async (message) => {
         const targetId = target?.id || args[opalIndex + 2];
         const index = parseInt(target ? args[opalIndex + 3] : args[opalIndex + 3]) - 1;
         if (!targetId) { await message.channel.send({ embeds: [errorEmbed(`please mention a user or provide their id nyan ⸝⸝ usage: opal removewarning @user 2`)] }); return; }
-        const record = warningHistory[targetId];
+        const record = await getRecord(targetId);
         if (!record || record.offenses.length === 0) {
           await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`no history found for <@${targetId}> nyan`)] });
           return;
@@ -281,31 +321,31 @@ client.on('messageCreate', async (message) => {
           await message.channel.send({ embeds: [errorEmbed(`invalid offense number nyan ⸝⸝ usage: opal removewarning @user 2`)] });
           return;
         }
-        record.offenses.splice(index, 1);
+        await removeWarning(targetId, index);
         await message.react(REACT_EMOJI);
         return;
       }
 
       if (command === 'banlist') {
-        const banned = Object.entries(warningHistory).filter(([, r]) => r.offenses.some(o => o.type === 'ban'));
+        const banned = await getList('ban');
         if (banned.length === 0) { await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`no banned users found nyan`)] }); return; }
-        const list = banned.map(([id, r]) => `<@${id}> — ${r.offenses.filter(o => o.type === 'ban').length} ban(s)`).join('\n');
+        const list = banned.map(r => `<@${r.userId}> — ${r.offenses.filter(o => o.type === 'ban').length} ban(s)`).join('\n');
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).addFields({ name: '›゛ ban list', value: list })] });
         return;
       }
 
       if (command === 'kicklist') {
-        const kicked = Object.entries(warningHistory).filter(([, r]) => r.offenses.some(o => o.type === 'kick'));
+        const kicked = await getList('kick');
         if (kicked.length === 0) { await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`no kicked users found nyan`)] }); return; }
-        const list = kicked.map(([id, r]) => `<@${id}> — ${r.offenses.filter(o => o.type === 'kick').length} kick(s)`).join('\n');
+        const list = kicked.map(r => `<@${r.userId}> — ${r.offenses.filter(o => o.type === 'kick').length} kick(s)`).join('\n');
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).addFields({ name: '›゛ kick list', value: list })] });
         return;
       }
 
       if (command === 'warnlist') {
-        const warned = Object.entries(warningHistory).filter(([, r]) => r.offenses.some(o => o.type === 'warn' || o.type === 'automod'));
+        const warned = await getList('warn');
         if (warned.length === 0) { await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`no warned users found nyan`)] }); return; }
-        const list = warned.map(([id, r]) => `<@${id}> — ${r.offenses.filter(o => o.type === 'warn' || o.type === 'automod').length} warning(s)`).join('\n');
+        const list = warned.map(r => `<@${r.userId}> — ${r.offenses.filter(o => o.type === 'warn' || o.type === 'automod').length} warning(s)`).join('\n');
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).addFields({ name: '›゛ warn list', value: list })] });
         return;
       }
@@ -361,5 +401,3 @@ client.on('messageCreate', async (message) => {
     await message.react(REACT_EMOJI);
   }
 });
-
-client.login(process.env.TOKEN);
