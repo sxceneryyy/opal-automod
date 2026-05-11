@@ -130,7 +130,7 @@ async function braveSearch(query, offset = 0) {
           const results = data.web?.results || [];
           if (results.length === 0) { resolve(null); return; }
           resolve({
-            snippet: results[0].description || results[0].title,
+            snippet: (results[0].description || results[0].title).replace(/<[^>]*>/g, ''),
             url: results[0].url,
             title: results[0].title
           });
