@@ -26,8 +26,8 @@ const BAD_WORDS = [
 ];
 
 const warningHistory = {};
-const lastSearch = {}; // stores last search topic per channel
-const searchOffset = {}; // tracks how many results deep we are per channel
+const lastSearch = {};
+const searchOffset = {};
 
 function getLogChannel(guild) {
   return guild.channels.cache.find(c => c.name === LOG_CHANNEL_NAME);
@@ -65,7 +65,7 @@ function addWarning(userId, userTag, reason, type) {
 
 function duckSearch(query) {
   return new Promise((resolve, reject) => {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1&skip_disambig=0`;
     https.get(url, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -84,20 +84,28 @@ async function doSearch(query, offset = 0) {
   const data = await duckSearch(query);
   const results = [];
 
-  if (data.AbstractText) {
-    results.push({ title: data.Heading || query, snippet: data.AbstractText, url: data.AbstractURL });
+  if (data.AbstractText && data.AbstractText.length > 0) {
+    results.push({
+      snippet: data.AbstractText,
+      url: data.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(query)}`
+    });
   }
 
-  if (data.RelatedTopics) {
-    for (const topic of data.RelatedTopics) {
-      if (topic.Text && topic.FirstURL) {
-        results.push({ title: topic.Text.slice(0, 60), snippet: topic.Text, url: topic.FirstURL });
-      }
-      if (results.length >= 5) break;
+  for (const topic of data.RelatedTopics || []) {
+    if (topic.Text && topic.FirstURL) {
+      results.push({ snippet: topic.Text, url: topic.FirstURL });
     }
+    if (results.length >= 8) break;
   }
 
-  return results[offset] || results[0] || null;
+  if (results.length === 0) {
+    results.push({
+      snippet: `here are some resources on ${query}`,
+      url: `https://www.khanacademy.org/search?page_search_query=${encodeURIComponent(query)}`
+    });
+  }
+
+  return results[offset] || results[results.length - 1] || null;
 }
 
 client.once('ready', () => {
