@@ -198,7 +198,8 @@ client.on('messageCreate', async (message) => {
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(
           `›゛ here's what i found on: **${query}**\n\n${result.snippet}\n\n[read this for more info!](${result.url})\n\n*say \`opal elaborate\` or \`opal more help\` to dive deeper nyan*`
         )] });
-      } catch {
+      } catch (err) {
+        console.log('search error:', err);
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`something went wrong with the search nyan ⸝⸝ try again`)] });
       }
       return;
