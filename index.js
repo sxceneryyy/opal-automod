@@ -32,7 +32,10 @@ const searchOffset = {};
 let db;
 
 async function connectDB() {
-  const mongoClient = new MongoClient(process.env.MONGODB_URI);
+  const mongoClient = new MongoClient(process.env.MONGODB_URI, {
+    tls: true,
+    tlsInsecure: true,
+  });
   await mongoClient.connect();
   db = mongoClient.db('opal');
   console.log('✅ Connected to MongoDB');
