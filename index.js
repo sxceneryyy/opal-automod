@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, Partials } = require('discord.js');
 const https = require('https');
+const zlib = require('zlib');
 const { MongoClient } = require('mongodb');
 
 const client = new Client({
@@ -116,26 +117,28 @@ async function braveSearch(query, offset = 0) {
     };
 
     const req = https.request(options, (res) => {
+      let stream = res;
+      if (res.headers['content-encoding'] === 'gzip') {
+        stream = res.pipe(zlib.createGunzip());
+      }
       const chunks = [];
-      res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => {
+      stream.on('data', chunk => chunks.push(chunk));
+      stream.on('end', () => {
         try {
           const body = Buffer.concat(chunks).toString();
           const data = JSON.parse(body);
           const results = data.web?.results || [];
-          if (results.length === 0) {
-            resolve(null);
-            return;
-          }
+          if (results.length === 0) { resolve(null); return; }
           resolve({
             snippet: results[0].description || results[0].title,
             url: results[0].url,
             title: results[0].title
           });
-        } catch {
+        } catch (e) {
           reject(new Error('failed to parse response'));
         }
       });
+      stream.on('error', reject);
     });
 
     req.on('error', reject);
@@ -222,7 +225,8 @@ client.on('messageCreate', async (message) => {
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(
           `›゛ here's more on: **${topic}**\n\n${result.snippet}\n\n[read this for more info!](${result.url})\n\n*say \`opal elaborate\` or \`opal more help\` for even more nyan*`
         )] });
-      } catch {
+      } catch (err) {
+        console.log('search error:', err);
         await message.channel.send({ embeds: [new EmbedBuilder().setColor(EMBED_COLOR).setDescription(`something went wrong nyan ⸝⸝ try again`)] });
       }
       return;
@@ -400,4 +404,8 @@ client.on('messageCreate', async (message) => {
     // react when name is mentioned with no command
     await message.react(REACT_EMOJI);
   }
+});
+
+connectDB().then(() => {
+  client.login(process.env.TOKEN);
 });
